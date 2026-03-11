@@ -76,7 +76,10 @@ function ClaudeAgentACPAdapter:__build_tool_call_update(update)
         end
     elseif kind == "think" and rawInput.subagent_type then
         message.kind = "SubAgent"
-    elseif kind == "SubAgent" then
+    elseif
+        kind == "SubAgent" or (kind == "other" and rawInput.subagent_type)
+    then
+        message.kind = "SubAgent"
         message.argument = string.format(
             "%s, %s: %s",
             rawInput.model or "default",
