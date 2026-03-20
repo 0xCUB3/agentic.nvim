@@ -1,11 +1,6 @@
 local Logger = require("agentic.utils.logger")
 local transport_module = require("agentic.acp.acp_transport")
 
---[[
-CRITICAL: Type annotations in this file are essential for Lua Language Server support.
-DO NOT REMOVE them. Only update them if the underlying types change.
---]]
-
 --- Known ACP protocol tool call kinds.
 --- Used to detect unknown kinds from providers we don't use daily.
 local KNOWN_ACP_KINDS = {
@@ -226,19 +221,6 @@ function ACPClient:__send_result(id, result)
     self.transport:send(data)
 end
 
---- @param id number
---- @param message string
---- @param code number|nil
---- @return nil
-function ACPClient:_send_error(id, message, code)
-    code = code or self.ERROR_CODES.TRANSPORT_ERROR
-    local msg =
-        { jsonrpc = "2.0", id = id, error = { code = code, message = message } }
-
-    local data = vim.json.encode(msg)
-    self.transport:send(data)
-end
-
 --- Handles raw JSON-RPC message received from the transport
 --- @param message agentic.acp.ResponseRaw
 function ACPClient:_handle_message(message)
@@ -321,8 +303,9 @@ function ACPClient:__handle_session_update(params)
     end
 
     if session_update_type == "tool_call" then
-        -- kind is optional and has default value
         update.kind = update.kind or "other"
+        update.status = update.status or "pending"
+
         if not KNOWN_ACP_KINDS[update.kind] then
             -- Using notify intentionally so users of providers
             -- we don't use daily report unknown kinds as issues
@@ -346,25 +329,6 @@ function ACPClient:__handle_session_update(params)
     end
 end
 
---- Extract body text from standard ACP content field.
---- Adapters should use this to avoid duplicating content extraction logic.
---- @param update agentic.acp.ToolCallMessage|agentic.acp.ToolCallUpdate
---- @return string[]|nil body
-function ACPClient:extract_content_body(update)
-    local content = update.content and update.content[1]
-
-    if
-        content
-        and content.type == "content"
-        and content.content
-        and content.content.text
-    then
-        return self:safe_split(content.content.text)
-    end
-
-    return nil
-end
-
 --- Safely split a string into an array of lines
 --- Some agents send `nil` other send `vim.NIL` for empty content
 --- @param possible_string string|nil|vim.NIL
@@ -378,26 +342,99 @@ function ACPClient:safe_split(possible_string)
 end
 
 --- Build the message for a tool_call. it's usually the first update received for a tool call
---- Adapters override this to add provider-specific fields or transformations.
 --- @protected
---- @param update agentic.acp.ToolCallMessage
+--- @param update agentic.acp.ToolCallBase
 --- @return agentic.ui.MessageWriter.ToolCallBlock message
 function ACPClient:__build_tool_call_message(update)
     --- @type agentic.ui.MessageWriter.ToolCallBlock
     local message = {
         tool_call_id = update.toolCallId,
-        kind = update.kind,
-        status = update.status,
-        argument = update.title,
-        body = self:extract_content_body(update),
     }
+
+    if update.kind then
+        message.kind = update.kind
+    end
+
+    if update.status then
+        message.status = update.status
+    end
+
+    if update.title then
+        message.argument = update.title
+    end
+
+    if update.content then
+        local body_parts = {}
+        for _, content in ipairs(update.content) do
+            if content then
+                if
+                    content.type == "content"
+                    and content.content
+                    and content.content.text
+                then
+                    table.insert(
+                        body_parts,
+                        self:safe_split(content.content.text)
+                    )
+                elseif content.type == "diff" then
+                    local new_string = content.newText
+                    local old_string = content.oldText
+
+                    message.diff = {
+                        new = self:safe_split(new_string),
+                        old = self:safe_split(old_string),
+                        all = false,
+                    }
+
+                    if content.path then
+                        message.file_path = content.path
+                    end
+                end
+            end
+        end
+
+        if #body_parts > 0 then
+            local merged = body_parts[1]
+            for i = 2, #body_parts do
+                table.insert(merged, "---")
+                vim.list_extend(merged, body_parts[i])
+            end
+            message.body = merged
+        end
+    end
+
+    -- Fallback: build diff from rawInput when content is missing (e.g. OpenCode)
+    local raw_input = update.rawInput
+
+    if not message.diff and update.kind == "edit" and raw_input then
+        local new_string = raw_input.new_string or raw_input.newString
+        local old_string = raw_input.old_string or raw_input.oldString
+
+        if new_string then
+            message.diff = {
+                new = self:safe_split(new_string),
+                old = self:safe_split(old_string),
+                all = raw_input.replace_all or false,
+            }
+        end
+    end
+
+    if not message.file_path and raw_input then
+        message.file_path = raw_input.file_path or raw_input.filePath
+    end
+
+    if not message.file_path and update.locations then
+        local first_location = update.locations[1]
+        if first_location and first_location.path then
+            message.file_path = first_location.path
+        end
+    end
 
     return message
 end
 
 --- Default handler for tool_call session updates.
 --- Builds a generic ToolCallBlock from standard ACP fields.
---- Adapters override this for provider-specific transformations.
 --- @protected
 --- @param session_id string
 --- @param update agentic.acp.ToolCallMessage
@@ -409,31 +446,12 @@ function ACPClient:__handle_tool_call(session_id, update)
     end)
 end
 
---- Build the message for a tool_call_update.
---- Adapters override this to add provider-specific fields.
---- @protected
---- @param update agentic.acp.ToolCallUpdate
---- @return agentic.ui.MessageWriter.ToolCallBase message
-function ACPClient:__build_tool_call_update(update)
-    --- @type agentic.ui.MessageWriter.ToolCallBase
-    local message = {
-        tool_call_id = update.toolCallId,
-        status = update.status,
-        body = self:extract_content_body(update),
-    }
-    return message
-end
-
 --- Default handler for tool_call_update session updates.
 --- @protected
 --- @param session_id string
 --- @param update agentic.acp.ToolCallUpdate
 function ACPClient:__handle_tool_call_update(session_id, update)
-    if not update.status then
-        return
-    end
-
-    local message = self:__build_tool_call_update(update)
+    local message = self:__build_tool_call_message(update)
 
     self:__with_subscriber(session_id, function(subscriber)
         subscriber.on_tool_call_update(message)
@@ -452,17 +470,19 @@ function ACPClient:__handle_request_permission(message_id, request)
     local session_id = request.sessionId
 
     self:__with_subscriber(session_id, function(subscriber)
-        -- Every change to this block MUST be reflected in Gemini's ACP Adapter, as it has custom implementation @see gemini_acp_adapter.lua
+        local message = self:__build_tool_call_message(request.toolCall)
+        subscriber.on_tool_call_update(message)
+
         subscriber.on_request_permission(request, function(option_id)
-            self:__send_result(
-                message_id,
-                { --- @type agentic.acp.RequestPermissionOutcome
-                    outcome = {
-                        outcome = "selected",
-                        optionId = option_id,
-                    },
-                }
-            )
+            --- @type agentic.acp.RequestPermissionOutcome
+            local outcome = {
+                outcome = "selected",
+                optionId = option_id,
+            }
+
+            self:__send_result(message_id, {
+                outcome = outcome,
+            })
         end)
     end)
 end
@@ -694,288 +714,3 @@ function ACPClient:is_connected()
 end
 
 return ACPClient
-
---- @class agentic.acp.ClientInfo
---- @field name string
---- @field version string
-
---- @class agentic.acp.ClientCapabilities
---- @field fs agentic.acp.FileSystemCapability
---- @field terminal boolean
-
---- @class agentic.acp.InitializeParams
---- @field protocolVersion number
---- @field clientInfo agentic.acp.ClientInfo
---- @field clientCapabilities agentic.acp.ClientCapabilities
-
---- @class agentic.acp.FileSystemCapability
---- @field readTextFile boolean
---- @field writeTextFile boolean
-
---- @class agentic.acp.AgentCapabilities
---- @field loadSession boolean
---- @field promptCapabilities agentic.acp.PromptCapabilities
-
---- @class agentic.acp.PromptCapabilities
---- @field image boolean
---- @field audio boolean
---- @field embeddedContext boolean
-
---- @class agentic.acp.AuthMethod
---- @field id string
---- @field name string
---- @field description? string
-
---- @class agentic.acp.McpServer
---- @field name string
---- @field command string
---- @field args string[]
---- @field env agentic.acp.EnvVariable[]
-
---- @class agentic.acp.EnvVariable
---- @field name string
---- @field value string
-
---- @alias agentic.acp.StopReason
---- | "end_turn"
---- | "max_tokens"
---- | "max_turn_requests"
---- | "refusal"
---- | "cancelled"
-
---- @alias agentic.acp.ToolKind
---- | "read"
---- | "edit"
---- | "delete"
---- | "move"
---- | "search"
---- | "execute"
---- | "think"
---- | "fetch"
---- | "WebSearch"
---- | "SlashCommand"
---- | "SubAgent"
---- | "other"
---- | "create"
---- | "write"
---- | "Skill"
---- | "switch_mode"
-
---- @alias agentic.acp.ToolCallStatus
---- | "pending"
---- | "in_progress"
---- | "completed"
---- | "failed"
-
---- @alias agentic.acp.PlanEntryStatus
---- | "pending"
---- | "in_progress"
---- | "completed"
-
---- @alias agentic.acp.PlanEntryPriority
---- | "high"
---- | "medium"
---- | "low"
-
---- @class agentic.acp.RawInput
---- @field file_path string
---- @field new_string? string
---- @field old_string? string
---- @field replace_all? boolean
---- @field description? string
---- @field command? string
---- @field url? string Usually from the fetch tool
---- @field prompt? string Usually accompanying the fetch tool, not the web_search
---- @field query? string Usually from the web_search tool
---- @field timeout? number
-
---- @class agentic.acp.ToolCall
---- @field toolCallId string
---- @field rawInput? agentic.acp.RawInput
-
---- @class agentic.acp.ToolCallRegularContent
---- @field type "content"
---- @field content agentic.acp.Content
-
---- @class agentic.acp.ToolCallDiffContent
---- @field type "diff"
---- @field path string
---- @field oldText string
---- @field newText string
-
---- @alias agentic.acp.ACPToolCallContent
---- | agentic.acp.ToolCallRegularContent
---- | agentic.acp.ToolCallDiffContent
-
---- @class agentic.acp.ToolCallLocation
---- @field path string
---- @field line? number
-
---- @class agentic.acp.PlanEntry
---- @field content string
---- @field priority agentic.acp.PlanEntryPriority
---- @field status agentic.acp.PlanEntryStatus
-
---- @class agentic.acp.AvailableCommand
---- @field name string
---- @field description string
---- @field input? table<string, any>
-
---- @class agentic.acp.AgentMode
---- @field id string
---- @field name string
---- @field description? string
-
---- @class agentic.acp.Model
---- @field modelId string
---- @field name string
---- @field description string
-
---- @class agentic.acp.ModesInfo
---- @field availableModes agentic.acp.AgentMode[]
---- @field currentModeId string
-
---- @class agentic.acp.ModelsInfo
---- @field availableModels agentic.acp.Model[]
---- @field currentModelId string
-
---- @class agentic.acp.ConfigOption.Option
---- @field description string
---- @field name string
---- @field value string
-
---- @alias agentic.acp.ConfigOption.Category
---- | "mode"
---- | "model"
---- | "thought_level"
-
---- @class agentic.acp.ConfigOption
---- @field id string
---- @field category agentic.acp.ConfigOption.Category
---- @field currentValue string
---- @field description string
---- @field name string
---- @field options agentic.acp.ConfigOption.Option[]
-
---- @class agentic.acp.SessionCreationResponse
---- @field sessionId string
---- @field modes? agentic.acp.ModesInfo
---- @field models? agentic.acp.ModelsInfo
---- @field configOptions? agentic.acp.ConfigOption[]
-
---- @class agentic.acp.ResponseRaw
---- @field id? number
---- @field jsonrpc string
---- @field method string
---- @field result? table
---- @field params? { sessionId: string, update: agentic.acp.SessionUpdateMessage }
---- @field error? agentic.acp.ACPError
-
---- @class agentic.acp.ToolCallMessage
---- @field sessionUpdate "tool_call"
---- @field toolCallId string
---- @field title string most likely the command to be executed
---- @field kind agentic.acp.ToolKind
---- @field status agentic.acp.ToolCallStatus
---- @field content? agentic.acp.ACPToolCallContent[]
---- @field locations? agentic.acp.ToolCallLocation[]
---- @field rawInput? agentic.acp.RawInput
-
---- @class agentic.acp.ToolCallUpdate
---- @field sessionUpdate "tool_call_update"
---- @field toolCallId string
---- @field status? agentic.acp.ToolCallStatus
---- @field content? agentic.acp.ACPToolCallContent[]
---- @field rawOutput? table Not all providers are sending it, seems non standard
-
---- @class agentic.acp.PlanUpdate
---- @field sessionUpdate "plan"
---- @field entries agentic.acp.PlanEntry[]
-
---- @class agentic.acp.AvailableCommandsUpdate
---- @field sessionUpdate "available_commands_update"
---- @field availableCommands agentic.acp.AvailableCommand[]
-
---- @class agentic.acp.CurrentModeUpdate
---- @field sessionUpdate "current_mode_update"
---- @field currentModeId string
-
---- @class agentic.acp.UsageUpdate
---- @field sessionUpdate "usage_update"
---- @field used number Tokens currently in context
---- @field size number Total context window size in tokens
---- @field cost? { amount: number, currency: string } Cumulative session cost
-
---- @class agentic.acp.ConfigOptionsUpdate
---- @field sessionUpdate "config_option_update"
---- @field configOptions agentic.acp.ConfigOption[]
-
---- @alias agentic.acp.SessionUpdateMessage
---- | agentic.acp.UserMessageChunk
---- | agentic.acp.AgentMessageChunk
---- | agentic.acp.AgentThoughtChunk
---- | agentic.acp.ToolCallMessage
---- | agentic.acp.ToolCallUpdate
---- | agentic.acp.PlanUpdate
---- | agentic.acp.AvailableCommandsUpdate
---- | agentic.acp.CurrentModeUpdate
---- | agentic.acp.UsageUpdate
---- | agentic.acp.ConfigOptionsUpdate
-
---- @class agentic.acp.PermissionOption
---- @field optionId string
---- @field name string
---- @field kind "allow_once" | "allow_always" | "reject_once" | "reject_always"
-
---- @class agentic.acp.RequestPermission
---- @field options agentic.acp.PermissionOption[]
---- @field sessionId string
---- @field toolCall agentic.acp.ToolCall
-
---- @class agentic.acp.RequestPermissionOutcome
---- @field outcome "cancelled" | "selected"
---- @field optionId? string
-
---- @alias agentic.acp.ClientConnectionState
---- | "disconnected"
---- | "connecting"
---- | "connected"
---- | "initializing"
---- | "ready"
---- | "error"
-
---- @class agentic.acp.ACPError
---- @field code number
---- @field message string
---- @field data? any
-
---- @alias agentic.acp.ClientHandlers.on_session_update fun(update: agentic.acp.SessionUpdateMessage): nil
---- @alias agentic.acp.ClientHandlers.on_request_permission fun(request: agentic.acp.RequestPermission, callback: fun(option_id: string | nil)): nil
---- @alias agentic.acp.ClientHandlers.on_error fun(err: agentic.acp.ACPError): nil
-
---- @class agentic.Selection
---- @field lines string[] The selected code lines
---- @field start_line integer Starting line number (1-indexed)
---- @field end_line integer Ending line number (1-indexed, inclusive)
---- @field file_path string Relative file path
---- @field file_type string File type/extension
-
---- Handlers for a specific session. Each session subscribes with its own handlers.
---- @class agentic.acp.ClientHandlers
---- @field on_session_update agentic.acp.ClientHandlers.on_session_update
---- @field on_request_permission agentic.acp.ClientHandlers.on_request_permission
---- @field on_error agentic.acp.ClientHandlers.on_error
---- @field on_tool_call fun(tool_call: agentic.ui.MessageWriter.ToolCallBlock): nil
---- @field on_tool_call_update fun(tool_call: agentic.ui.MessageWriter.ToolCallBase): nil
-
---- @class agentic.acp.ACPProviderConfig
---- @field name? string Provider name
---- @field transport_type? agentic.acp.TransportType
---- @field command? string Command to spawn agent (for stdio)
---- @field args? string[] Arguments for agent command
---- @field env? table<string, string|nil> Environment variables
---- @field timeout? number Request timeout in milliseconds
---- @field reconnect? boolean Enable auto-reconnect
---- @field max_reconnect_attempts? number Maximum reconnection attempts
---- @field auth_method? string Authentication method
---- @field default_mode? string Default mode ID to set on session creation

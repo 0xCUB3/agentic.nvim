@@ -5,8 +5,11 @@
 --- | "codex-acp"
 --- | "opencode-acp"
 --- | "cursor-acp"
+--- | "copilot-acp"
 --- | "auggie-acp"
 --- | "mistral-vibe-acp"
+--- | "cline-acp"
+--- | "goose-acp"
 
 --- @alias agentic.UserConfig.HeaderRenderFn fun(parts: agentic.ui.ChatWidget.HeaderParts): string|nil
 
@@ -77,7 +80,7 @@ local ConfigDefault = {
         ["gemini-acp"] = {
             name = "Gemini ACP",
             command = "gemini",
-            args = { "--experimental-acp" },
+            args = { "--acp" },
             env = {},
         },
 
@@ -102,8 +105,20 @@ local ConfigDefault = {
 
         ["cursor-acp"] = {
             name = "Cursor Agent ACP",
-            command = "cursor-agent-acp",
-            args = {},
+            command = "cursor-agent",
+            args = {
+                "acp",
+            },
+            env = {},
+        },
+
+        ["copilot-acp"] = {
+            name = "Copilot ACP",
+            command = "copilot",
+            args = {
+                "--acp",
+                "--stdio",
+            },
             env = {},
         },
 
@@ -120,6 +135,20 @@ local ConfigDefault = {
             name = "Mistral Vibe ACP",
             command = "vibe-acp",
             args = {},
+            env = {},
+        },
+
+        ["cline-acp"] = {
+            name = "Cline ACP",
+            command = "cline",
+            args = { "--acp" },
+            env = {},
+        },
+
+        ["goose-acp"] = {
+            name = "Goose ACP",
+            command = "goose",
+            args = { "acp" },
             env = {},
         },
     },
@@ -243,6 +272,7 @@ local ConfigDefault = {
     --- @class agentic.UserConfig.StatusIcons
     status_icons = {
         pending = "󰔛",
+        in_progress = "󰔛",
         completed = "✔",
         failed = "",
     },
