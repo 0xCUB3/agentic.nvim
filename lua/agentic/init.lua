@@ -229,17 +229,12 @@ local function apply_provider_switch(provider_name)
                 new_session.code_selection:add(selection)
             end
 
-            -- Restore chat history and set history_to_send IMMEDIATELY
-            -- Don't wait for on_session_ready because user might submit prompt before callback fires
-            Logger.debug(
-                "Restoring "
-                    .. tostring(#saved_messages)
-                    .. " messages after provider switch"
-            )
-            new_session.chat_history.messages = saved_messages
+            -- Set history_to_send IMMEDIATELY so it's available if user submits prompt
+            -- before async callbacks fire (critical for history to be sent with next prompt)
             new_session.history_to_send = saved_messages
 
-            -- Register callback for when session is ready to replay history visually
+            -- Register callback for when session is ready
+            -- This waits for: agent ready -> session created -> welcome banner written
             new_session:on_session_ready(function()
                 -- Verify this session is still active for the tabpage
                 local active_session = SessionRegistry.sessions[tab_page_id]
@@ -250,7 +245,16 @@ local function apply_provider_switch(provider_name)
                     return
                 end
 
-                -- Replay messages visually in the chat buffer
+                Logger.debug(
+                    "Replaying "
+                        .. tostring(#saved_messages)
+                        .. " messages after provider switch"
+                )
+
+                -- Restore chat history for persistence
+                new_session.chat_history.messages = saved_messages
+
+                -- Replay messages visually in the chat buffer (after welcome header is written)
                 new_session.message_writer:replay_history_messages(
                     saved_messages
                 )
