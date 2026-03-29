@@ -173,6 +173,9 @@ end
 
 --- @param provider_name agentic.UserConfig.ProviderName
 local function apply_provider_switch(provider_name)
+    Logger.debug(
+        "apply_provider_switch: starting for provider " .. provider_name
+    )
     SessionRegistry.get_session_for_tab_page(nil, function(session)
         -- Guard: reject if session is being created or generating
         if not session.session_id then
@@ -192,6 +195,11 @@ local function apply_provider_switch(provider_name)
         end
 
         -- Save state before destroying
+        Logger.debug(
+            "apply_provider_switch: saving "
+                .. tostring(#session.chat_history.messages)
+                .. " messages"
+        )
         local saved_messages = session.chat_history.messages
         local saved_files = session.file_list:get_files()
         local saved_selections = session.code_selection:get_selections()
@@ -212,14 +220,22 @@ local function apply_provider_switch(provider_name)
         end
 
         -- Destroy old session
+        Logger.debug("apply_provider_switch: destroying old session")
         SessionRegistry.destroy_session(tab_page_id)
 
         -- Update config for new session
         Config.provider = provider_name
 
         -- Create new session via registry
+        Logger.debug("apply_provider_switch: creating new session")
         local new_session =
             SessionRegistry.get_session_for_tab_page(tab_page_id)
+        if new_session then
+            Logger.debug(
+                "apply_provider_switch: new_session created, session_id="
+                    .. tostring(new_session.session_id)
+            )
+        end
         if new_session then
             -- Restore files and code selections immediately (don't wait for session ready)
             for _, file_path in ipairs(saved_files) do
@@ -231,20 +247,16 @@ local function apply_provider_switch(provider_name)
 
             -- Set history_to_send IMMEDIATELY so it's available if user submits prompt
             -- before async callbacks fire (critical for history to be sent with next prompt)
+            Logger.debug(
+                "apply_provider_switch: setting history_to_send to "
+                    .. tostring(#saved_messages)
+                    .. " messages"
+            )
             new_session.history_to_send = saved_messages
 
             -- Register callback for when session is ready
             -- This waits for: agent ready -> session created -> welcome banner written
-            new_session:on_session_ready(function()
-                -- Verify this session is still active for the tabpage
-                local active_session = SessionRegistry.sessions[tab_page_id]
-                if not active_session or active_session ~= new_session then
-                    Logger.debug(
-                        "Skipping history replay: session was replaced"
-                    )
-                    return
-                end
-
+            new_session:on_session_ready(function(ready_session)
                 Logger.debug(
                     "Replaying "
                         .. tostring(#saved_messages)
@@ -252,10 +264,11 @@ local function apply_provider_switch(provider_name)
                 )
 
                 -- Restore chat history for persistence
-                new_session.chat_history.messages = saved_messages
+                ready_session.chat_history.messages = saved_messages
+                ready_session.history_to_send = saved_messages
 
                 -- Replay messages visually in the chat buffer (after welcome header is written)
-                new_session.message_writer:replay_history_messages(
+                ready_session.message_writer:replay_history_messages(
                     saved_messages
                 )
             end)

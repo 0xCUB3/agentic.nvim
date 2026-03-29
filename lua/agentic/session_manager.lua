@@ -247,13 +247,24 @@ end
 --- Register callback for when ACP session is ready.
 --- Fires immediately (via vim.schedule) if session
 --- already exists.
---- @param callback fun()
+--- @param callback fun(session: agentic.SessionManager)
 function SessionManager:on_session_ready(callback)
     if self.session_id then
-        vim.schedule(callback)
+        Logger.debug(
+            "on_session_ready: session already ready, scheduling callback immediately"
+        )
+        vim.schedule(function()
+            callback(self)
+        end)
         return
     end
-    table.insert(self._session_ready_callbacks, callback)
+
+    Logger.debug(
+        "on_session_ready: queueing callback, will fire when session ready"
+    )
+    table.insert(self._session_ready_callbacks, function()
+        callback(self)
+    end)
 end
 
 --- Check if a prompt can be submitted to the session.
@@ -965,7 +976,6 @@ function SessionManager:_cancel_session()
     self.chat_history = ChatHistory:new()
     self.history_to_send = nil
     self.message_writer:reset_sender_tracking()
-    self._session_ready_callbacks = {}
 end
 
 function SessionManager:add_selection_or_file_to_session()
