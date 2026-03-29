@@ -173,9 +173,85 @@ end
 
 --- @param provider_name agentic.UserConfig.ProviderName
 local function apply_provider_switch(provider_name)
-    Config.provider = provider_name
     SessionRegistry.get_session_for_tab_page(nil, function(session)
-        session:switch_provider()
+        -- Guard: reject if session is being created or generating
+        if not session.session_id then
+            Logger.notify(
+                "Cannot switch provider: session is initializing. Please wait.",
+                vim.log.levels.WARN
+            )
+            return
+        end
+
+        if session.is_generating then
+            Logger.notify(
+                "Cannot switch provider while generating. Stop generation first.",
+                vim.log.levels.WARN
+            )
+            return
+        end
+
+        -- Save state before destroying
+        local saved_messages = session.chat_history.messages
+        local saved_files = session.file_list:get_files()
+        local saved_selections = session.code_selection:get_selections()
+        local widget_was_open = session.widget:is_open()
+        local tab_page_id = session.tab_page_id
+
+        -- Validate new provider exists BEFORE destroying old session
+        local new_agent = AgentInstance.get_instance(
+            provider_name,
+            function() end
+        )
+        if not new_agent then
+            Logger.notify(
+                "Provider '" .. provider_name .. "' not available.",
+                vim.log.levels.ERROR
+            )
+            return
+        end
+
+        -- Destroy old session
+        SessionRegistry.destroy_session(tab_page_id)
+
+        -- Update config for new session
+        Config.provider = provider_name
+
+        -- Create new session via registry
+        SessionRegistry.get_session_for_tab_page(
+            tab_page_id,
+            function(new_session)
+                -- Open widget immediately if it was open before
+                if widget_was_open then
+                    new_session.widget:show()
+                end
+
+                -- Register callback for when session is ready to restore state
+                new_session:on_session_ready(function()
+                    -- Verify this session is still active for the tabpage
+                    local active_session = SessionRegistry.sessions[tab_page_id]
+                    if not active_session or active_session ~= new_session then
+                        return
+                    end
+
+                    -- Restore chat history for persistence
+                    new_session.chat_history.messages = saved_messages
+
+                    -- Replay messages visually
+                    new_session.message_writer:replay_history_messages(
+                        saved_messages
+                    )
+
+                    -- Restore files and code selections
+                    for _, file_path in ipairs(saved_files) do
+                        new_session.file_list:add(file_path)
+                    end
+                    for _, selection in ipairs(saved_selections) do
+                        new_session.code_selection:add(selection)
+                    end
+                end)
+            end
+        )
     end)
 end
 
