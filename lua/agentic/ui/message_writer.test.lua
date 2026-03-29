@@ -589,4 +589,140 @@ describe("agentic.ui.MessageWriter", function()
             end
         )
     end)
+
+    describe("replay_history_messages", function()
+        local function get_all_lines()
+            return vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+        end
+
+        it("replays user and agent messages with headers", function()
+            writer:set_provider_name("Claude")
+
+            --- @type agentic.ui.ChatHistory.Message[]
+            local messages = {
+                {
+                    type = "user",
+                    text = "hello",
+                    timestamp = 1000,
+                    provider_name = "Claude",
+                },
+                {
+                    type = "agent",
+                    text = "hi there",
+                    provider_name = "Claude",
+                },
+            }
+
+            writer:replay_history_messages(messages)
+
+            local lines = get_all_lines()
+            local content = table.concat(lines, "\n")
+
+            -- Verify user header and message
+            assert.truthy(content:match("## .* User"))
+            assert.truthy(content:match("hello"))
+
+            -- Verify agent header and message
+            assert.truthy(content:match("### .* Agent %- Claude"))
+            assert.truthy(content:match("hi there"))
+        end)
+
+        it("shows correct provider name per message", function()
+            writer:set_provider_name("Claude")
+
+            --- @type agentic.ui.ChatHistory.Message[]
+            local messages = {
+                {
+                    type = "user",
+                    text = "question from user",
+                    provider_name = "Claude",
+                },
+                {
+                    type = "agent",
+                    text = "from claude",
+                    provider_name = "Claude",
+                },
+                {
+                    type = "user",
+                    text = "another question",
+                    provider_name = "Claude",
+                },
+                {
+                    type = "agent",
+                    text = "from gemini",
+                    provider_name = "Gemini",
+                },
+            }
+
+            writer:replay_history_messages(messages)
+
+            local lines = get_all_lines()
+            local content = table.concat(lines, "\n")
+
+            -- Both provider names should appear and messages should be there
+            assert.truthy(content:match("Claude"))
+            assert.truthy(content:match("from claude"))
+            assert.truthy(content:match("from gemini"))
+        end)
+
+        it("restores current provider after replay", function()
+            writer:set_provider_name("Claude")
+
+            --- @type agentic.ui.ChatHistory.Message[]
+            local messages = {
+                {
+                    type = "agent",
+                    text = "old message",
+                    provider_name = "Gemini",
+                },
+            }
+
+            writer:replay_history_messages(messages)
+
+            -- After replay, provider should be restored
+            assert.equal("Claude", writer._provider_name)
+        end)
+
+        it("handles thought chunk messages", function()
+            writer:set_provider_name("Claude")
+
+            --- @type agentic.ui.ChatHistory.Message[]
+            local messages = {
+                {
+                    type = "thought",
+                    text = "thinking about this",
+                    provider_name = "Claude",
+                },
+            }
+
+            writer:replay_history_messages(messages)
+
+            local lines = get_all_lines()
+            local content = table.concat(lines, "\n")
+
+            assert.truthy(content:match("thinking about this"))
+        end)
+
+        it("handles tool_call messages", function()
+            writer:set_provider_name("Claude")
+
+            --- @type agentic.ui.ChatHistory.Message[]
+            local messages = {
+                {
+                    type = "tool_call",
+                    tool_call_id = "tc-1",
+                    kind = "read",
+                    file_path = "test.txt",
+                    status = "completed",
+                    body = { "file content" },
+                    provider_name = "Claude",
+                },
+            }
+
+            writer:replay_history_messages(messages)
+
+            -- Tool call should be tracked
+            assert.is_not_nil(writer.tool_call_blocks["tc-1"])
+        end)
+    end)
 end)

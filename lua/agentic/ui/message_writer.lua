@@ -818,6 +818,46 @@ function MessageWriter:remove_permission_buttons(start_row, end_row)
     end)
 end
 
+--- Replay saved chat history messages into the buffer.
+--- Uses write_restoring_message for user messages
+--- (suppresses timestamp), write_message for agent/thought
+--- messages, and write_tool_call_block for tool calls.
+--- Temporarily swaps _provider_name per message so agent
+--- headers show the correct provider from history.
+--- @param messages agentic.ui.ChatHistory.Message[]
+function MessageWriter:replay_history_messages(messages)
+    local ACPPayloads = require("agentic.acp.acp_payloads")
+    local current_provider = self._provider_name
+
+    for _, msg in ipairs(messages) do
+        -- Show correct provider name per message
+        if msg.provider_name then
+            self._provider_name = msg.provider_name
+        end
+
+        if msg.type == "user" then
+            self:write_restoring_message(
+                ACPPayloads.generate_user_message(msg.text)
+            )
+        elseif msg.type == "agent" then
+            self:write_message(ACPPayloads.generate_agent_message(msg.text))
+        elseif msg.type == "thought" then
+            self:write_message({
+                sessionUpdate = "agent_thought_chunk",
+                content = {
+                    type = "text",
+                    text = msg.text,
+                },
+            })
+        elseif msg.type == "tool_call" then
+            self:write_tool_call_block(msg)
+        end
+    end
+
+    -- Restore current provider for new messages
+    self._provider_name = current_provider
+end
+
 --- Apply highlights to block content (either diff highlights or Comment for non-edit blocks)
 --- @param bufnr integer
 --- @param start_row integer Header line number
