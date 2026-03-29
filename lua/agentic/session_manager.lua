@@ -62,6 +62,8 @@ end
 --- @field chat_history agentic.ui.ChatHistory
 --- @field _history_to_send? agentic.ui.ChatHistory.Message[] Messages to prepend on next prompt submit
 --- @field _is_restoring_session boolean Whether a session is being loaded from history
+--- @field _connection_error boolean Whether provider connection failed
+--- @field _session_ready_callbacks fun()[]
 local SessionManager = {}
 SessionManager.__index = SessionManager
 
@@ -113,10 +115,20 @@ function SessionManager:new(tab_page_id)
         _is_first_message = true,
         is_generating = false,
         _is_restoring_session = false,
+        _connection_error = false,
+        _session_ready_callbacks = {},
     }, self)
 
     local agent = AgentInstance.get_instance(Config.provider, function(_client)
         vim.schedule(function()
+            -- Guard: cached client may be dead
+            if
+                self.agent.state == "error"
+                or self.agent.state == "disconnected"
+            then
+                self:_handle_connection_error()
+                return
+            end
             self:new_session()
         end)
     end)
@@ -137,6 +149,15 @@ function SessionManager:new(tab_page_id)
     self.message_writer = MessageWriter:new(self.widget.buf_nrs.chat)
     self.message_writer:set_provider_name(self.agent.provider_config.name)
     self.status_animation = StatusAnimation:new(self.widget.buf_nrs.chat)
+    self.status_animation:start("busy")
+
+    -- Check for sync failure during ACPClient construction
+    if self.agent.state == "error" or self.agent.state == "disconnected" then
+        vim.schedule(function()
+            self:_handle_connection_error()
+        end)
+    end
+
     self.permission_manager = PermissionManager:new(self.message_writer)
 
     FilePicker:new(self.widget.buf_nrs.input)
@@ -204,6 +225,34 @@ function SessionManager:new(tab_page_id)
     end)
 
     return self
+end
+
+--- Handle provider connection failure.
+--- Stops busy animation and writes error to chat buffer.
+function SessionManager:_handle_connection_error()
+    self._connection_error = true
+    self.status_animation:stop()
+    self.message_writer:write_message(
+        ACPPayloads.generate_agent_message(
+            "⚠️ Failed to connect to "
+                .. self.agent.provider_config.name
+                .. ". Check that the provider is"
+                .. " installed and try again"
+                .. " with a new session."
+        )
+    )
+end
+
+--- Register callback for when ACP session is ready.
+--- Fires immediately (via vim.schedule) if session
+--- already exists.
+--- @param callback fun()
+function SessionManager:on_session_ready(callback)
+    if self.session_id then
+        vim.schedule(callback)
+        return
+    end
+    table.insert(self._session_ready_callbacks, callback)
 end
 
 --- @param update agentic.acp.SessionUpdateMessage
@@ -839,6 +888,12 @@ function SessionManager:new_session(opts)
             if on_created then
                 on_created()
             end
+
+            -- Fire session ready callbacks after welcome banner
+            for _, cb in ipairs(self._session_ready_callbacks) do
+                cb()
+            end
+            self._session_ready_callbacks = {}
         end)
     end)
 end
@@ -865,6 +920,7 @@ function SessionManager:_cancel_session()
     self.chat_history = ChatHistory:new()
     self._history_to_send = nil
     self.message_writer:reset_sender_tracking()
+    self._session_ready_callbacks = {}
 end
 
 --- Switch to a different ACP provider while preserving chat UI and history.
