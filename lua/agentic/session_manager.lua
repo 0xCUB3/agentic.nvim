@@ -928,6 +928,13 @@ function SessionManager:new_session(opts)
             end
 
             -- Fire session ready callbacks after welcome banner
+            if #self._session_ready_callbacks > 0 then
+                Logger.debug(
+                    "Firing "
+                        .. tostring(#self._session_ready_callbacks)
+                        .. " session ready callbacks"
+                )
+            end
             for _, cb in ipairs(self._session_ready_callbacks) do
                 cb()
             end
