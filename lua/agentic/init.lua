@@ -218,40 +218,40 @@ local function apply_provider_switch(provider_name)
         Config.provider = provider_name
 
         -- Create new session via registry
-        SessionRegistry.get_session_for_tab_page(
-            tab_page_id,
-            function(new_session)
-                -- Open widget immediately if it was open before
-                if widget_was_open then
-                    new_session.widget:show()
+        local new_session =
+            SessionRegistry.get_session_for_tab_page(tab_page_id)
+        if new_session then
+            -- Register callback BEFORE opening widget, so restoration happens
+            -- even if session is already initialized
+            new_session:on_session_ready(function()
+                -- Verify this session is still active for the tabpage
+                local active_session = SessionRegistry.sessions[tab_page_id]
+                if not active_session or active_session ~= new_session then
+                    return
                 end
 
-                -- Register callback for when session is ready to restore state
-                new_session:on_session_ready(function()
-                    -- Verify this session is still active for the tabpage
-                    local active_session = SessionRegistry.sessions[tab_page_id]
-                    if not active_session or active_session ~= new_session then
-                        return
-                    end
+                -- Restore chat history for persistence
+                new_session.chat_history.messages = saved_messages
 
-                    -- Restore chat history for persistence
-                    new_session.chat_history.messages = saved_messages
+                -- Replay messages visually
+                new_session.message_writer:replay_history_messages(
+                    saved_messages
+                )
 
-                    -- Replay messages visually
-                    new_session.message_writer:replay_history_messages(
-                        saved_messages
-                    )
+                -- Restore files and code selections
+                for _, file_path in ipairs(saved_files) do
+                    new_session.file_list:add(file_path)
+                end
+                for _, selection in ipairs(saved_selections) do
+                    new_session.code_selection:add(selection)
+                end
+            end)
 
-                    -- Restore files and code selections
-                    for _, file_path in ipairs(saved_files) do
-                        new_session.file_list:add(file_path)
-                    end
-                    for _, selection in ipairs(saved_selections) do
-                        new_session.code_selection:add(selection)
-                    end
-                end)
+            -- Open widget immediately if it was open before
+            if widget_was_open then
+                new_session.widget:show()
             end
-        )
+        end
     end)
 end
 
