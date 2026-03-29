@@ -221,8 +221,15 @@ local function apply_provider_switch(provider_name)
         local new_session =
             SessionRegistry.get_session_for_tab_page(tab_page_id)
         if new_session then
-            -- Register callback BEFORE opening widget, so restoration happens
-            -- even if session is already initialized
+            -- Restore files and code selections immediately (don't wait for session ready)
+            for _, file_path in ipairs(saved_files) do
+                new_session.file_list:add(file_path)
+            end
+            for _, selection in ipairs(saved_selections) do
+                new_session.code_selection:add(selection)
+            end
+
+            -- Register callback for when session is ready to restore history
             new_session:on_session_ready(function()
                 -- Verify this session is still active for the tabpage
                 local active_session = SessionRegistry.sessions[tab_page_id]
@@ -233,18 +240,13 @@ local function apply_provider_switch(provider_name)
                 -- Restore chat history for persistence
                 new_session.chat_history.messages = saved_messages
 
-                -- Replay messages visually
+                -- Set history to send so it's included with next prompt
+                new_session.history_to_send = saved_messages
+
+                -- Replay messages visually in the chat buffer
                 new_session.message_writer:replay_history_messages(
                     saved_messages
                 )
-
-                -- Restore files and code selections
-                for _, file_path in ipairs(saved_files) do
-                    new_session.file_list:add(file_path)
-                end
-                for _, selection in ipairs(saved_selections) do
-                    new_session.code_selection:add(selection)
-                end
             end)
 
             -- Open widget immediately if it was open before

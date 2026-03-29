@@ -47,7 +47,7 @@ end
 --- @class agentic.SessionManager
 --- @field session_id? string
 --- @field tab_page_id integer
---- @field _is_first_message boolean Whether this is the first message in the session, used to add system info only once
+--- @field _is_first_message boolean
 --- @field is_generating boolean
 --- @field widget agentic.ui.ChatWidget
 --- @field agent agentic.acp.ACPClient
@@ -60,9 +60,9 @@ end
 --- @field config_options agentic.acp.AgentConfigOptions
 --- @field todo_list agentic.ui.TodoList
 --- @field chat_history agentic.ui.ChatHistory
---- @field _history_to_send? agentic.ui.ChatHistory.Message[] Messages to prepend on next prompt submit
---- @field _is_restoring_session boolean Whether a session is being loaded from history
---- @field _connection_error boolean Whether provider connection failed
+--- @field history_to_send agentic.ui.ChatHistory.Message[]|nil
+--- @field _is_restoring_session boolean
+--- @field _connection_error boolean
 --- @field _session_ready_callbacks fun()[]
 local SessionManager = {}
 SessionManager.__index = SessionManager
@@ -116,6 +116,7 @@ function SessionManager:new(tab_page_id)
         is_generating = false,
         _is_restoring_session = false,
         _connection_error = false,
+        history_to_send = nil,
         _session_ready_callbacks = {},
     }, self)
 
@@ -585,10 +586,10 @@ function SessionManager:_handle_input_submit(input_text)
     local prompt = {}
 
     -- If restored/switched session, prepend history on first submit
-    if self._history_to_send then
+    if self.history_to_send then
         self.chat_history.title = input_text -- Update title for restored session
-        ChatHistory.prepend_restored_messages(self._history_to_send, prompt)
-        self._history_to_send = nil
+        ChatHistory.prepend_restored_messages(self.history_to_send, prompt)
+        self.history_to_send = nil
     elseif self.chat_history.title == "" then
         self.chat_history.title = input_text -- Set title for new session
     end
@@ -955,7 +956,7 @@ function SessionManager:_cancel_session()
     SlashCommands.setCommands(self.widget.buf_nrs.input, {})
 
     self.chat_history = ChatHistory:new()
-    self._history_to_send = nil
+    self.history_to_send = nil
     self.message_writer:reset_sender_tracking()
     self._session_ready_callbacks = {}
 end

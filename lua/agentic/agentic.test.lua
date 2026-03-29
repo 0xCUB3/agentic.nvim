@@ -17,6 +17,50 @@ describe("agentic: switch_provider", function()
     before_each(function()
         original_provider = Config.provider
         logger_notify_stub = spy.stub(Logger, "notify")
+
+        -- Mock AgentInstance globally for all tests
+        get_instance_stub = spy.stub(AgentInstance, "get_instance")
+
+        -- Create a function that returns the appropriate agent based on provider
+        local function get_fake_agent(provider_name)
+            local agent_name = provider_name or "TestProvider"
+            --- @type agentic.acp.ACPClient
+            local fake_agent = {}
+
+            fake_agent.state = "ready"
+            fake_agent.provider_config = {
+                name = agent_name,
+                initial_model = nil,
+                default_mode = nil,
+            }
+            fake_agent.agent_info = {}
+
+            -- Mock create_session method
+            function fake_agent:create_session(_handlers, callback)
+                vim.schedule(function()
+                    callback({
+                        sessionId = "test-session-" .. agent_name,
+                        configOptions = nil,
+                        modes = nil,
+                        models = nil,
+                    })
+                end)
+            end
+
+            function fake_agent:cancel_session() end
+
+            return fake_agent
+        end
+
+        get_instance_stub:invokes(function(provider_name, callback)
+            local fake_agent = get_fake_agent(provider_name)
+            if callback then
+                vim.schedule(function()
+                    callback(fake_agent)
+                end)
+            end
+            return fake_agent
+        end)
     end)
 
     after_each(function()
@@ -33,27 +77,28 @@ describe("agentic: switch_provider", function()
         end
     end)
 
+    it("can create a session with mocked agent", function()
+        local SessionManager = require("agentic.session_manager")
+        local tab_page_id = vim.api.nvim_get_current_tabpage()
+
+        local session = SessionManager:new(tab_page_id) --[[@as agentic.SessionManager]]
+        assert.is_not_nil(session)
+    end)
+
     it("restores chat history messages after switching provider", function()
         -- Setup: Create initial session with messages manually
         local tab_page_id = vim.api.nvim_get_current_tabpage()
         local SessionManager = require("agentic.session_manager")
 
-        -- Mock AgentInstance to prevent actual spawning
-        get_instance_stub = spy.stub(AgentInstance, "get_instance")
-        local fake_agent = {
-            state = "ready",
-            provider_config = {
-                name = "OriginalProvider",
-                initial_model = nil,
-                default_mode = nil,
-            },
-            agent_info = {},
-        }
-        get_instance_stub.returns(fake_agent)
-
         -- Create initial session manually
         local session = SessionManager:new(tab_page_id) --[[@as agentic.SessionManager]]
         assert.is_not_nil(session)
+
+        -- Wait for async callbacks (agent ready -> new_session)
+        vim.wait(100, function()
+            return false
+        end)
+
         SessionRegistry.sessions[tab_page_id] = session
 
         -- Manually set session_id and initialize chat_history
@@ -83,6 +128,11 @@ describe("agentic: switch_provider", function()
         Config.provider = "NewProvider"
         Agentic.switch_provider({ provider = "NewProvider" })
 
+        -- Allow async callbacks to fire
+        vim.wait(100, function()
+            return false
+        end)
+
         -- Get new session
         local new_session = SessionRegistry.sessions[tab_page_id] --[[@as agentic.SessionManager]]
         assert.is_not_nil(new_session)
@@ -90,17 +140,19 @@ describe("agentic: switch_provider", function()
         -- CRITICAL TEST: Verify history messages were restored
         -- This test will fail if replay_history_messages wasn't called
         -- or if on_session_ready didn't fire
-        assert.equal(
-            initial_message_count,
-            #new_session.chat_history.messages,
-            "History message count should be preserved after provider switch"
-        )
+        assert.equal(initial_message_count, #new_session.chat_history.messages)
 
         -- Verify message content is correct
         assert.equal("user", new_session.chat_history.messages[1].type)
         assert.equal("hello", new_session.chat_history.messages[1].text)
         assert.equal("agent", new_session.chat_history.messages[2].type)
         assert.equal("hi there", new_session.chat_history.messages[2].text)
+
+        -- Verify history_to_send was set for next prompt
+        assert.equal(
+            initial_message_count,
+            #(new_session.history_to_send or {})
+        )
     end)
 
     it("blocks switch when session is initializing", function()
@@ -108,20 +160,8 @@ describe("agentic: switch_provider", function()
         local SessionManager = require("agentic.session_manager")
         local tab_page_id = vim.api.nvim_get_current_tabpage()
 
-        get_instance_stub = spy.stub(AgentInstance, "get_instance")
-        local fake_agent = {
-            state = "ready",
-            provider_config = {
-                name = "TestProvider",
-                initial_model = nil,
-                default_mode = nil,
-            },
-            agent_info = {},
-        }
-        get_instance_stub.returns(fake_agent)
-
         -- Create session with no session_id (initializing state)
-        local session = SessionManager:new(tab_page_id)
+        local session = SessionManager:new(tab_page_id) --[[@as agentic.SessionManager]]
         assert.is_not_nil(session)
         assert.is_nil(session.session_id) -- Not initialized yet
         SessionRegistry.sessions[tab_page_id] = session
@@ -140,21 +180,9 @@ describe("agentic: switch_provider", function()
         local SessionManager = require("agentic.session_manager")
         local tab_page_id = vim.api.nvim_get_current_tabpage()
 
-        get_instance_stub = spy.stub(AgentInstance, "get_instance")
-        local fake_agent = {
-            state = "ready",
-            provider_config = {
-                name = "TestProvider",
-                initial_model = nil,
-                default_mode = nil,
-            },
-            agent_info = {},
-        }
-        get_instance_stub.returns(fake_agent)
-
         -- Create initialized session
-        local session = SessionManager:new(tab_page_id)
-        session.session_id = "test-session-id"
+        local session = SessionManager:new(tab_page_id) --[[@as agentic.SessionManager]]
+        session.session_id = "test-session-id" --[[@as string]]
         session.is_generating = true -- Set generating flag
         SessionRegistry.sessions[tab_page_id] = session
 
