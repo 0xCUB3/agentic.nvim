@@ -255,6 +255,38 @@ function SessionManager:on_session_ready(callback)
     table.insert(self._session_ready_callbacks, callback)
 end
 
+--- Check if a prompt can be submitted to the session.
+--- Returns false if session not ready, generating, or
+--- restoring. Notifies user of the reason.
+--- @return boolean can_submit
+function SessionManager:can_submit_prompt()
+    if not self.session_id then
+        Logger.notify(
+            "Session not ready. Wait for initialization to complete.",
+            vim.log.levels.WARN
+        )
+        return false
+    end
+
+    if self._is_restoring_session then
+        Logger.notify(
+            "Session is restoring. Please wait...",
+            vim.log.levels.WARN
+        )
+        return false
+    end
+
+    if self.is_generating then
+        Logger.notify(
+            "Agent is still processing. Please wait...",
+            vim.log.levels.WARN
+        )
+        return false
+    end
+
+    return true
+end
+
 --- @param update agentic.acp.SessionUpdateMessage
 function SessionManager:_on_session_update(update)
     if update.sessionUpdate == "user_message_chunk" then
@@ -541,6 +573,11 @@ function SessionManager:_handle_input_submit(input_text)
     -- the Agent might not send an identifiable response that could be acted upon
     if input_text:match("^/new%s*") then
         self:new_session()
+        return
+    end
+
+    -- Guard: cannot submit if session not ready or generating
+    if not self:can_submit_prompt() then
         return
     end
 
