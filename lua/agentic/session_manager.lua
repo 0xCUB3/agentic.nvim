@@ -374,7 +374,14 @@ function SessionManager:_handle_mode_change(mode_id, is_legacy)
         return
     end
 
+    local request_session_id = self.session_id
+
     local function callback(result, err)
+        if self.session_id ~= request_session_id then
+            Logger.debug("Stale mode change response, ignoring")
+            return
+        end
+
         if err then
             Logger.notify(
                 string.format(
@@ -421,7 +428,14 @@ function SessionManager:_handle_model_change(model_id, is_legacy)
         return
     end
 
+    local request_session_id = self.session_id
+
     local callback = function(result, err)
+        if self.session_id ~= request_session_id then
+            Logger.debug("Stale model change response, ignoring")
+            return
+        end
+
         if err then
             Logger.notify(
                 string.format(
@@ -785,6 +799,13 @@ function SessionManager:new_session(opts)
                 self.config_options:set_legacy_models(response.models)
             end
         end
+
+        self.config_options:set_initial_model(
+            self.agent.provider_config.initial_model,
+            function(model, is_legacy)
+                self:_handle_model_change(model, is_legacy)
+            end
+        )
 
         self.config_options:set_initial_mode(
             self.agent.provider_config.default_mode,
