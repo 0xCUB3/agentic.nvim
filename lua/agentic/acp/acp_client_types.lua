@@ -326,3 +326,4 @@
 --- @field auth_method? string Authentication method
 --- @field default_mode? string Default mode ID to set on session creation
 --- @field initial_model? string Default model ID to set on session creation
+--- @field supports_unadvertised_mode_config? boolean Inject a mode config option locally when the provider accepts mode changes but does not advertise them in session/new
