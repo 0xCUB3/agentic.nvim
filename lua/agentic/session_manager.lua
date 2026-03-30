@@ -26,6 +26,48 @@ local FILE_MUTATING_KINDS = {
     move = true,
 }
 
+local function has_mode_config_option(config_options)
+    if not config_options then
+        return false
+    end
+
+    for _, option in ipairs(config_options) do
+        if option.category == "mode" then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function build_hidden_codex_mode_option(provider_config)
+    return {
+        id = "mode",
+        name = "Approval Preset",
+        description = "Choose an approval and sandboxing preset for your session",
+        category = "mode",
+        type = "select",
+        currentValue = provider_config.default_mode or "auto",
+        options = {
+            {
+                value = "read-only",
+                name = "Read Only",
+                description = "Codex can read files in the current workspace. Approval is required to edit files or access the internet.",
+            },
+            {
+                value = "auto",
+                name = "Default",
+                description = "Codex can read and edit files in the current workspace, and run commands. Approval is required to access the internet or edit other files. (Identical to Agent mode)",
+            },
+            {
+                value = "full-access",
+                name = "Full Access",
+                description = "Codex can edit files outside this workspace and access the internet without asking for approval. Exercise caution when using.",
+            },
+        },
+    }
+end
+
 --- Safely invoke a user-configured hook
 --- @param hook_name "on_prompt_submit" | "on_response_complete" | "on_session_update"
 --- @param data table
@@ -42,6 +84,25 @@ function P.invoke_hook(hook_name, data)
             end
         end)
     end
+end
+
+--- @param provider_config table|nil
+--- @param response table
+function P.inject_hidden_mode_option(provider_config, response)
+    if
+        not provider_config
+        or not provider_config.supports_unadvertised_mode_config
+        or response.modes
+        or has_mode_config_option(response.configOptions)
+    then
+        return
+    end
+
+    local config_options = response.configOptions or {}
+    response.configOptions = vim.list_extend(
+        { build_hidden_codex_mode_option(provider_config) },
+        config_options
+    )
 end
 
 --- @class agentic.SessionManager
@@ -394,6 +455,7 @@ function SessionManager:_handle_mode_change(mode_id, is_legacy)
         else
             -- needed for backward compatibility
             self.config_options.legacy_agent_modes.current_mode_id = mode_id
+            self.agent.provider_config.default_mode = mode_id
 
             if result and result.configOptions then
                 Logger.debug("received result after setting mode")
@@ -783,6 +845,8 @@ function SessionManager:new_session(opts)
         self.session_id = response.sessionId
         self.chat_history.session_id = response.sessionId
         self.chat_history.timestamp = os.time()
+
+        P.inject_hidden_mode_option(self.agent.provider_config, response)
 
         if response.configOptions then
             Logger.debug("Provider announce configOptions")
@@ -1200,6 +1264,16 @@ function SessionManager:load_acp_session(session_id, title, timestamp)
             self.chat_history.title = title or ""
             self.chat_history.timestamp = os.time()
             self._is_first_message = false
+
+            if
+                self.agent.provider_config.supports_unadvertised_mode_config
+                and not self.config_options.mode
+                and not self.config_options.legacy_agent_modes.current_mode_id
+            then
+                self:_handle_new_config_options({
+                    build_hidden_codex_mode_option(self.agent.provider_config),
+                })
+            end
 
             -- Re-render mode in chat header from preserved config_options
             local current_mode = self.config_options.mode
