@@ -64,7 +64,9 @@ end
 --- @param rhs string|fun():any
 --- @param opts vim.keymap.set.Opts|nil
 function BufHelpers.keymap_set(bufnr, mode, lhs, rhs, opts)
-    opts = opts or {}
+    --- @class agentic._KeymapOpts : vim.keymap.set.Opts
+    --- @field buffer integer
+    opts = opts or {} --[[@as agentic._KeymapOpts]]
     opts.buffer = bufnr
     vim.keymap.set(mode, lhs, rhs, opts)
 end
