@@ -37,14 +37,14 @@ jobs:
   format:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup directories
         run: mkdir -p .local/bin
 
       - name: Cache StyLua
         id: cache-stylua
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .local/bin/stylua
           key: stylua-${{ runner.os }}-${{ env.STYLUA_VERSION }}
@@ -64,14 +64,14 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup directories
         run: mkdir -p .local/bin
 
       - name: Cache Selene
         id: cache-selene
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .local/bin/selene
           key: selene-${{ runner.os }}-${{ env.SELENE_VERSION }}
@@ -98,7 +98,7 @@ jobs:
         neovim-version: ['v0.11.5', 'nightly']
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install system dependencies
         run: |
@@ -122,7 +122,7 @@ jobs:
 
       - name: Cache Neovim
         id: cache-neovim
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .local/nvim
           key: neovim-${{ runner.os }}-${{ matrix.neovim-version }}
@@ -134,7 +134,7 @@ jobs:
             tar xzf - --strip-components=1 -C .local/nvim
 
       - name: Cache deps (mini.nvim)
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: deps
           key: deps-${{ runner.os }}-${{ hashFiles('tests/init.lua') }}
@@ -154,14 +154,14 @@ jobs:
         neovim-version: ['v0.11.5', 'nightly']
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup directories
         run: mkdir -p .local/nvim .local/bin .local/luals
 
       - name: Cache Neovim
         id: cache-neovim
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .local/nvim
           key: neovim-${{ runner.os }}-${{ matrix.neovim-version }}
@@ -174,7 +174,7 @@ jobs:
 
       - name: Cache LuaLS
         id: cache-luals
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .local/luals
           key: luals-${{ runner.os }}-${{ env.LUALS_VERSION }}
@@ -187,7 +187,7 @@ jobs:
 
       - name: Cache deps (mini.nvim)
         id: cache-deps
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: deps
           key: deps-${{ runner.os }}-${{ hashFiles('tests/init.lua') }}
